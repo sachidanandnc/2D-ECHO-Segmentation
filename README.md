@@ -1,4 +1,4 @@
-# Echo Research Paper Kit
+# 2D-ECHO-Segmentation
 
 A research-oriented continuation of the college major project that reproduced the 2024 IEEE TUFFC Pix2Pix-GAN echocardiography segmentation paper.
 
