@@ -1,0 +1,193 @@
+HIGH-DICE ECHOCARDIOGRAPHY TRAINING COMMANDS (UBUNTU / LINUX)
+================================================================
+
+IMPORTANT
+---------
+1. Use the NEW project as an independent folder.
+2. Do not resume the old baseline checkpoint that stopped at 0.8096.
+3. Change PROJECT_DIR and CAMUS_DIR below to your real locations.
+4. CAMUS_DIR must be the folder containing database_nifti and database_split.
+5. Run commands from top to bottom. Lines beginning with # are explanations.
+
+
+STEP 1 — SET YOUR TWO PATHS
+---------------------------
+
+# Example project path. Change it if your new folder is elsewhere.
+PROJECT_DIR="/media/rvitm/Data2/echo_high_dice/echo_research_paper_kit"
+
+# Change this to the folder containing database_nifti and database_split.
+CAMUS_DIR="/path/to/CAMUS_public"
+
+cd "$PROJECT_DIR"
+
+
+STEP 2 — INSTALL AND CHECK THE NEW PROJECT (RUN ONCE)
+-----------------------------------------------------
+
+python -m pip install -e .
+
+nvidia-smi
+
+python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE')"
+
+python scripts/smoke_test.py
+
+python -m pytest
+
+
+STEP 3 — CHECK THE CAMUS DATASET
+--------------------------------
+
+python scripts/check_dataset.py \
+  --config configs/high_dice_region_only.yaml \
+  --data-root "$CAMUS_DIR"
+
+# Do not start training unless the dataset check finishes successfully.
+
+
+STEP 4 — START THE RECOMMENDED TRAINING RUN
+-------------------------------------------
+
+python -u scripts/train.py \
+  --config configs/high_dice_region_only.yaml \
+  --data-root "$CAMUS_DIR"
+
+# Keep the terminal open while training.
+# Results are saved automatically in:
+# runs/high_dice_region_only_lv/seed_2026/
+# best.pt = best validation model
+# last.pt = latest completed epoch, used for resuming
+# history.json = every epoch's training and validation results
+
+
+STEP 5 — RESUME IF TRAINING WAS INTERRUPTED
+-------------------------------------------
+
+cd "$PROJECT_DIR"
+
+python -u scripts/train.py \
+  --config configs/high_dice_region_only.yaml \
+  --data-root "$CAMUS_DIR" \
+  --resume runs/high_dice_region_only_lv/seed_2026/last.pt
+
+# Do not use --resume when starting for the first time.
+# Do not resume any checkpoint from the old 0.8096 baseline run.
+
+
+STEP 6 — IF BATCH SIZE 2 CAUSES A CUDA OUT-OF-MEMORY ERROR
+----------------------------------------------------------
+
+# Start a separate batch-size-one experiment with this command:
+
+python -u scripts/train.py \
+  --config configs/high_dice_region_only.yaml \
+  --data-root "$CAMUS_DIR" \
+  --batch-size 1 \
+  --run-dir runs/high_dice_region_only_lv_batch1/seed_2026
+
+# Resume that batch-size-one run with:
+
+python -u scripts/train.py \
+  --config configs/high_dice_region_only.yaml \
+  --data-root "$CAMUS_DIR" \
+  --batch-size 1 \
+  --resume runs/high_dice_region_only_lv_batch1/seed_2026/last.pt
+
+
+STEP 7 — CALIBRATE THE BEST MODEL ON VALIDATION DATA
+----------------------------------------------------
+
+# Use this after the recommended training run is finished.
+
+python scripts/tune_threshold.py \
+  --config configs/high_dice_region_only.yaml \
+  --data-root "$CAMUS_DIR" \
+  --checkpoint runs/high_dice_region_only_lv/seed_2026/best.pt \
+  --output runs/high_dice_region_only_lv/seed_2026/threshold_calibration.json
+
+# If you used the batch-size-one run directory, replace the two paths above with:
+# runs/high_dice_region_only_lv_batch1/seed_2026/best.pt
+# runs/high_dice_region_only_lv_batch1/seed_2026/threshold_calibration.json
+
+
+STEP 8 — FINAL TEST EVALUATION
+------------------------------
+
+# Only run this after training choices are finished. Do not repeatedly tune on test.
+
+python scripts/evaluate.py \
+  --config configs/high_dice_region_only.yaml \
+  --data-root "$CAMUS_DIR" \
+  --checkpoint runs/high_dice_region_only_lv/seed_2026/best.pt \
+  --inference-policy runs/high_dice_region_only_lv/seed_2026/threshold_calibration.json \
+  --output runs/high_dice_region_only_lv/seed_2026/test_metrics.csv
+
+
+OPTIONAL STEP 9 — TRAIN THE SMALL-GAN COMPARISON
+------------------------------------------------
+
+# Run this only after the region-only run is stable. It is a separate experiment.
+
+python scripts/check_dataset.py \
+  --config configs/high_dice_binary.yaml \
+  --data-root "$CAMUS_DIR"
+
+python -u scripts/train.py \
+  --config configs/high_dice_binary.yaml \
+  --data-root "$CAMUS_DIR"
+
+# Resume the small-GAN comparison if interrupted:
+
+python -u scripts/train.py \
+  --config configs/high_dice_binary.yaml \
+  --data-root "$CAMUS_DIR" \
+  --resume runs/high_dice_binary_lv/seed_2026/last.pt
+
+# Calibrate the small-GAN comparison:
+
+python scripts/tune_threshold.py \
+  --config configs/high_dice_binary.yaml \
+  --data-root "$CAMUS_DIR" \
+  --checkpoint runs/high_dice_binary_lv/seed_2026/best.pt \
+  --output runs/high_dice_binary_lv/seed_2026/threshold_calibration.json
+
+# Evaluate it only if this experiment is the frozen final choice:
+
+python scripts/evaluate.py \
+  --config configs/high_dice_binary.yaml \
+  --data-root "$CAMUS_DIR" \
+  --checkpoint runs/high_dice_binary_lv/seed_2026/best.pt \
+  --inference-policy runs/high_dice_binary_lv/seed_2026/threshold_calibration.json \
+  --output runs/high_dice_binary_lv/seed_2026/test_metrics.csv
+
+
+OPTIONAL STEP 10 — ROBUSTNESS AND CLINICAL REPORTS
+--------------------------------------------------
+
+# These commands use the region-only model. Change paths/config if the GAN model wins.
+
+python scripts/robustness_eval.py \
+  --config configs/high_dice_region_only.yaml \
+  --data-root "$CAMUS_DIR" \
+  --checkpoint runs/high_dice_region_only_lv/seed_2026/best.pt \
+  --inference-policy runs/high_dice_region_only_lv/seed_2026/threshold_calibration.json \
+  --output runs/high_dice_region_only_lv/seed_2026/robustness_metrics.csv
+
+python scripts/clinical_biplane_eval.py \
+  --config configs/high_dice_region_only.yaml \
+  --data-root "$CAMUS_DIR" \
+  --checkpoint runs/high_dice_region_only_lv/seed_2026/best.pt \
+  --inference-policy runs/high_dice_region_only_lv/seed_2026/threshold_calibration.json \
+  --output runs/high_dice_region_only_lv/seed_2026/clinical_biplane_experimental.csv
+
+
+WHAT TO SEND BACK FOR REVIEW
+----------------------------
+
+Send these after approximately 30 epochs or when training finishes:
+
+1. A screenshot of the latest terminal output.
+2. runs/high_dice_region_only_lv/seed_2026/history.json
+3. The highest value shown after "best".
+
